@@ -15,126 +15,72 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
-// Function to get random discount percentage between min and max
-function getRandomDiscount(min = 25, max = 60) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-// Function to get seasonal discount bonus
-function getSeasonalBonus() {
-  const date = new Date();
-  const month = date.getMonth();
-  // Extra discounts for holiday seasons
-  if (month === 11) return 10; // December
-  if (month === 6) return 5;   // July (Summer sale)
-  if (month === 3) return 5;   // April (Spring sale)
-  return 0;
-}
-
-// Function to get volume-based discount
-function getVolumeDiscount(price) {
-  if (price >= 100) return 5;  // Extra 5% off for items $100+
-  if (price >= 50) return 3;   // Extra 3% off for items $50+
-  return 0;
-}
-
-// Function to create urgency with time-limited offers
-function isLimitedTimeOffer() {
-  const date = new Date();
-  const hour = date.getHours();
-  // Flash sale during peak shopping hours (12pm-2pm and 7pm-9pm)
-  return (hour >= 12 && hour <= 14) || (hour >= 19 && hour <= 21);
-}
-
-// Function to apply psychological pricing (e.g., $99.99 instead of $100)
-// Modify the price calculation function to ensure no negative values
-function applyPsychologicalPricing(price) {
-  const flooredPrice = Math.max(0.01, Math.floor(price) - 0.01);
-  return flooredPrice.toFixed(2);
-}
-
-// Function to calculate sale price
-function calculateSalePrice(originalPrice, totalDiscount) {
-  const boundedDiscount = Math.min(Math.max(totalDiscount, 10), 90);
-  const discountMultiplier = (100 - boundedDiscount) / 100;
-  // Ensure sale price is at least 1% less than original price
-  return Math.max(originalPrice * discountMultiplier, originalPrice * 0.01);
-}
-
-// Function to calculate compare-at price
-function calculateCompareAtPrice(originalPrice) {
-  // Compare-at price should be at least 10% higher than original price
-  return originalPrice * 2.5; // Increased markup for better perceived value
-}
-
+// Function to update product prices
 async function updateProductPrice(productId) {
   try {
     console.log('Processing product:', productId);
     
-    let product;
-    try {
-      product = await shopify.product.get(productId);
-    } catch (error) {
-      if (error.response?.status === 404) {
-        console.log(`Product ${productId} not found, skipping`);
-        return;
+    // Get product details
+    const product = await shopify.product.get(productId);
+    const basePrice = parseFloat(product.variants[0].price);
+    const markupPercentage = 1.5; // 50% markup for compare-at price
+
+    // Check if metafield exists
+    const metafields = await shopify.metafield.list({
+      metafield: {
+        owner_id: productId,
+        owner_resource: 'product'
       }
-      throw error;
+    });
+
+    let originalPrice = metafields.find(
+      m => m.namespace === 'price_automation' && m.key === 'original_price'
+    );
+
+    // If no metafield exists, create it with a markup
+    if (!originalPrice) {
+      const suggestedPrice = (basePrice * markupPercentage).toFixed(2);
+      console.log('Creating metafield with original price:', suggestedPrice);
+      originalPrice = await shopify.metafield.create({
+        namespace: 'price_automation',
+        key: 'original_price',
+        value: JSON.stringify({
+          amount: parseFloat(suggestedPrice),
+          currency_code: 'USD' // Make sure this matches your shop's currency
+        }),
+        type: 'money',
+        owner_resource: 'product',
+        owner_id: productId
+      });
     }
 
-    // Calculate base discount
-    let discountPercentage = getRandomDiscount();
-    const seasonalBonus = getSeasonalBonus();
-    discountPercentage += seasonalBonus;
-    
-    if (isLimitedTimeOffer()) {
-      discountPercentage += 5;
+    let originalPriceValue = parseFloat(JSON.parse(originalPrice.value).amount);
+
+    // Ensure compare-at price is higher than base price
+    if (originalPriceValue <= basePrice) {
+      originalPriceValue = (basePrice * markupPercentage).toFixed(2);
+      console.log(`Adjusted compare_at_price to ${originalPriceValue} (${markupPercentage}x markup from ${basePrice})`);
     }
 
-    // Update variants with proper price calculations
+    // Update compare-at price for all variants
+    console.log('Updating compare-at prices');
     for (const variant of product.variants) {
       try {
-        const originalPrice = parseFloat(variant.price);
-        const volumeDiscount = getVolumeDiscount(originalPrice);
-        const totalDiscount = Math.min(discountPercentage + volumeDiscount, 90);
+        const variantPrice = parseFloat(variant.price);
+        const compareAtPrice = Math.max(originalPriceValue, variantPrice * markupPercentage).toFixed(2);
         
-        // Calculate new prices
-        const compareAtPrice = calculateCompareAtPrice(originalPrice);
-        const salePrice = calculateSalePrice(originalPrice, totalDiscount);
-        
-        // Format prices
-        const formattedCompareAtPrice = applyPsychologicalPricing(compareAtPrice);
-        const formattedSalePrice = applyPsychologicalPricing(salePrice);
-        
-        // Validate price relationships
-        if (parseFloat(formattedSalePrice) <= 0 || parseFloat(formattedCompareAtPrice) <= 0) {
-          console.error(`Invalid prices for variant ${variant.id}: sale=${formattedSalePrice}, compare=${formattedCompareAtPrice}`);
-          continue;
-        }
-
-        // Only apply discount if we maintain proper price relationships
-        if (parseFloat(formattedSalePrice) < parseFloat(formattedCompareAtPrice)) {
-          await shopify.productVariant.update(variant.id, {
-            compare_at_price: formattedCompareAtPrice,
-            price: formattedSalePrice
-          });
-
-          console.log(`Updated variant ${variant.id}:`);
-          console.log(`- Original price: ${originalPrice}`);
-          console.log(`- Compare at price: ${formattedCompareAtPrice}`);
-          console.log(`- Sale price: ${formattedSalePrice}`);
-          console.log(`- Total discount: ${totalDiscount}%`);
-        } else {
-          console.log(`Skipping variant ${variant.id} - prices would not show proper discount`);
-        }
+        await shopify.productVariant.update(variant.id, {
+          compare_at_price: compareAtPrice
+        });
+        console.log(`Updated variant ${variant.id} compare-at price to ${compareAtPrice}`);
       } catch (error) {
-        console.error(`Error updating variant ${variant.id} prices:`, error.response?.body || error);
+        console.error(`Error updating variant ${variant.id} compare-at price:`, error.response ? error.response.body : error);
       }
     }
     
     console.log('Successfully processed product:', product.title);
   } catch (error) {
-    console.error('Error updating product price:', error.response?.body || error);
+    console.error('Error updating product price:', error.response ? error.response.body : error);
   }
 }
 
