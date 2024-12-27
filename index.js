@@ -2,12 +2,16 @@ require('dotenv').config();
 const express = require('express');
 const Shopify = require('shopify-api-node');
 const crypto = require('crypto');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 // Add body parsing middleware
 app.use(express.raw({type: 'application/json'}));
+
+// Serve static files
+app.use(express.static(path.join(__dirname, 'public')));
 
 const shopify = new Shopify({
   shopName: process.env.SHOP_NAME,
@@ -43,22 +47,28 @@ async function updateProductPrice(productId) {
         owner_resource: 'product'
       }
     });
+    console.log(`Metafields for product ${productId}:`, metafields);
 
     const originalPrice = metafields.find(
       m => m.namespace === 'price_automation' && m.key === 'original_price'
     );
+    console.log(`Original price metafield for product ${productId}:`, originalPrice);
 
     if (originalPrice) {
       // Get product variants
       const product = await shopify.product.get(productId);
+      console.log(`Product details for ${productId}:`, product);
       
       // Update each variant
       for (const variant of product.variants) {
+        console.log(`Updating variant ${variant.id} with compare_at_price: ${originalPrice.value}`);
         await shopify.productVariant.update(variant.id, {
           compare_at_price: originalPrice.value
         });
       }
       console.log(`Updated prices for product: ${product.title}`);
+    } else {
+      console.log(`No original price metafield found for product ${productId}`);
     }
   } catch (error) {
     console.error('Error updating product price:', error);
