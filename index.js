@@ -44,14 +44,17 @@ async function updateProductPrice(productId) {
       originalPrice = await shopify.metafield.create({
         namespace: 'price_automation',
         key: 'original_price',
-        value: suggestedPrice,
-        type: 'money', // Changed from 'number_decimal' to 'money'
+        value: JSON.stringify({
+          amount: parseFloat(suggestedPrice),
+          currency_code: 'USD' // Make sure this matches your shop's currency
+        }),
+        type: 'money',
         owner_resource: 'product',
         owner_id: productId
       });
     }
 
-    let originalPriceValue = parseFloat(originalPrice.value);
+    let originalPriceValue = parseFloat(JSON.parse(originalPrice.value).amount);
 
     // Ensure compare-at price is higher than base price
     if (originalPriceValue <= basePrice) {
