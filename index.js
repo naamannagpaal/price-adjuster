@@ -60,15 +60,19 @@ async function updateProductPrice(productId) {
     // Update compare-at price for all variants
     console.log('Updating compare-at prices');
     for (const variant of product.variants) {
-      await shopify.productVariant.update(variant.id, {
-        compare_at_price: originalPriceValue.toString()
-      });
-      console.log(`Updated variant ${variant.id} compare-at price to ${originalPriceValue}`);
+      try {
+        await shopify.productVariant.update(variant.id, {
+          compare_at_price: originalPriceValue.toString()
+        });
+        console.log(`Updated variant ${variant.id} compare-at price to ${originalPriceValue}`);
+      } catch (error) {
+        console.error(`Error updating variant ${variant.id} compare-at price:`, error.response.body);
+      }
     }
     
     console.log('Successfully processed product:', product.title);
   } catch (error) {
-    console.error('Error updating product price:', error);
+    console.error('Error updating product price:', error.response ? error.response.body : error);
   }
 }
 
