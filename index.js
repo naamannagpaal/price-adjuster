@@ -85,11 +85,14 @@ function verifyWebhook(req) {
 // Product update webhook
 app.post('/webhooks/products/update', async (req, res) => {
   try {
+    console.log('Received product update webhook');
     if (!verifyWebhook(req)) {
+      console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
     }
 
     const data = JSON.parse(req.body);
+    console.log('Webhook data:', data);
     await updateProductPrice(data.id);
     res.status(200).send('Webhook processed');
   } catch (error) {
@@ -101,11 +104,14 @@ app.post('/webhooks/products/update', async (req, res) => {
 // Collection update webhook
 app.post('/webhooks/collections/update', async (req, res) => {
   try {
+    console.log('Received collection update webhook');
     if (!verifyWebhook(req)) {
+      console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
     }
 
     const data = JSON.parse(req.body);
+    console.log('Webhook data:', data);
     if (data.id === process.env.SALE_COLLECTION_ID) {
       const products = await shopify.product.list({
         collection_id: data.id
@@ -124,12 +130,14 @@ app.post('/webhooks/collections/update', async (req, res) => {
 
 // Health check endpoint
 app.get('/', (req, res) => {
+  console.log('Health check endpoint hit');
   res.send('Price Adjuster Service Running');
 });
 
 // Manual trigger endpoint
 app.post('/update-prices', async (req, res) => {
   try {
+    console.log('Manual price update triggered');
     let page = 1;
     let products = [];
 
