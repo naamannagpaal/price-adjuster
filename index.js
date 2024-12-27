@@ -53,12 +53,24 @@ function applyPsychologicalPricing(price) {
   return flooredPrice.toFixed(2);
 }
 
-// Function to update product prices
+// Function to calculate sale price
+function calculateSalePrice(originalPrice, totalDiscount) {
+  // Ensure minimum discount is 10% and maximum is 90%
+  const boundedDiscount = Math.min(Math.max(totalDiscount, 10), 90);
+  const discountMultiplier = (100 - boundedDiscount) / 100;
+  return Math.max(originalPrice * discountMultiplier, 0.01);
+}
+
+// Function to calculate compare-at price
+function calculateCompareAtPrice(originalPrice) {
+  // Compare-at price should be higher than original price
+  return originalPrice * 2;
+}
+
 async function updateProductPrice(productId) {
   try {
     console.log('Processing product:', productId);
     
-    // Get product details and handle 404 gracefully
     let product;
     try {
       product = await shopify.product.get(productId);
@@ -70,95 +82,45 @@ async function updateProductPrice(productId) {
       throw error;
     }
 
-    const basePrice = parseFloat(product.variants[0].price);
-    
-    // Calculate discount with caps and floors
-    const minimumPrice = 0.01;
-    const markupPercentage = 2.0;
+    // Calculate base discount
     let discountPercentage = getRandomDiscount();
-    
-    // Add additional discounts
     const seasonalBonus = getSeasonalBonus();
     discountPercentage += seasonalBonus;
     
     if (isLimitedTimeOffer()) {
       discountPercentage += 5;
     }
-    
-    // Cap maximum discount to prevent negative prices
-    discountPercentage = Math.min(discountPercentage, 90); // Max 90% discount
 
-    // Check if metafield exists
-    const metafields = await shopify.metafield.list({
-      metafield: {
-        owner_id: productId,
-        owner_resource: 'product'
-      }
-    });
-
-    let originalPrice = metafields.find(
-      m => m.namespace === 'price_automation' && m.key === 'original_price'
-    );
-
-    // If no metafield exists, create it with USD currency
-    if (!originalPrice) {
-      const suggestedPrice = (basePrice * markupPercentage).toFixed(2);
-      console.log('Creating metafield with original price:', suggestedPrice);
-      originalPrice = await shopify.metafield.create({
-        namespace: 'price_automation',
-        key: 'original_price',
-        value: JSON.stringify({
-          amount: parseFloat(suggestedPrice),
-          currency_code: 'USD'  // Changed from CAD to USD
-        }),
-        type: 'money',
-        owner_resource: 'product',
-        owner_id: productId
-      });
-    }
-
-    let originalPriceValue = parseFloat(JSON.parse(originalPrice.value).amount);
-
-    // Ensure compare-at price is higher than base price
-    if (originalPriceValue <= basePrice) {
-      originalPriceValue = (basePrice * markupPercentage).toFixed(2);
-      console.log(`Adjusted compare_at_price to ${originalPriceValue} (${markupPercentage}x markup from ${basePrice})`);
-    }
-
-    // Update variants with safety checks
+    // Update variants with proper price calculations
     for (const variant of product.variants) {
       try {
-        const variantPrice = parseFloat(variant.price);
-        const volumeDiscount = getVolumeDiscount(variantPrice);
+        const originalPrice = parseFloat(variant.price);
+        const volumeDiscount = getVolumeDiscount(originalPrice);
         const totalDiscount = Math.min(discountPercentage + volumeDiscount, 90);
         
-        // Calculate and validate prices
-        const compareAtPrice = Math.max(
-          minimumPrice,
-          applyPsychologicalPricing(variantPrice * markupPercentage)
-        );
+        // Calculate new prices ensuring proper ratios
+        const compareAtPrice = calculateCompareAtPrice(originalPrice);
+        const salePrice = calculateSalePrice(originalPrice, totalDiscount);
         
-        const calculatedSalePrice = variantPrice * (1 - totalDiscount/100);
-        const salePrice = Math.max(
-          minimumPrice,
-          applyPsychologicalPricing(calculatedSalePrice)
-        );
+        // Format prices with psychological pricing
+        const formattedCompareAtPrice = applyPsychologicalPricing(compareAtPrice);
+        const formattedSalePrice = applyPsychologicalPricing(salePrice);
         
-        // Additional validation before update
-        if (salePrice <= 0 || compareAtPrice <= 0) {
-          console.error(`Invalid prices calculated for variant ${variant.id}: sale=${salePrice}, compare=${compareAtPrice}`);
+        // Verify prices are valid and maintain proper relationship
+        if (parseFloat(formattedSalePrice) >= parseFloat(formattedCompareAtPrice)) {
+          console.error(`Invalid price relationship for variant ${variant.id}`);
           continue;
         }
 
-        // Only update if prices are valid
         await shopify.productVariant.update(variant.id, {
-          compare_at_price: compareAtPrice,
-          price: salePrice
+          compare_at_price: formattedCompareAtPrice,
+          price: formattedSalePrice
         });
 
         console.log(`Updated variant ${variant.id}:`);
-        console.log(`- Compare at price: ${compareAtPrice}`);
-        console.log(`- Sale price: ${salePrice}`);
+        console.log(`- Original price: ${originalPrice}`);
+        console.log(`- Compare at price: ${formattedCompareAtPrice}`);
+        console.log(`- Sale price: ${formattedSalePrice}`);
         console.log(`- Total discount: ${totalDiscount}%`);
       } catch (error) {
         console.error(`Error updating variant ${variant.id} prices:`, error.response?.body || error);
