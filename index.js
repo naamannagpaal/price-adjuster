@@ -20,9 +20,10 @@ function getRandomDiscount(min = 25, max = 60) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// Function to apply psychological pricing (e.g., $99.99 instead of $100)
+// Modify the price calculation to ensure no negative values
 function applyPsychologicalPricing(price) {
-  return (Math.floor(price) - 0.01).toFixed(2);
+  const flooredPrice = Math.max(0.01, Math.floor(price) - 0.01);
+  return flooredPrice.toFixed(2);
 }
 
 // Function to get seasonal discount bonus
@@ -56,22 +57,23 @@ async function updateProductPrice(productId) {
   try {
     console.log('Processing product:', productId);
     
-    // Get product details
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
     
-    // Calculate markup and discounts
-    const markupPercentage = 2.0; // 100% markup for better perceived value
+    // Ensure minimum price
+    const minimumPrice = 0.01;
+    const markupPercentage = 2.0;
     let discountPercentage = getRandomDiscount();
     
-    // Add seasonal bonus discount
     const seasonalBonus = getSeasonalBonus();
     discountPercentage += seasonalBonus;
     
-    // Add flash sale bonus if during peak hours
     if (isLimitedTimeOffer()) {
-      discountPercentage += 5; // Additional 5% off during flash sale
+      discountPercentage += 5;
     }
+    
+    // Cap maximum discount to prevent negative prices
+    discountPercentage = Math.min(discountPercentage, 90); // Max 90% discount
     
     console.log(`Applying ${discountPercentage}% total discount (including ${seasonalBonus}% seasonal bonus)`);
 
@@ -112,18 +114,29 @@ async function updateProductPrice(productId) {
       console.log(`Adjusted compare_at_price to ${originalPriceValue} (${markupPercentage}x markup from ${basePrice})`);
     }
 
-    // Update compare-at price for all variants
-    console.log('Updating compare-at prices');
+    // Update variants with safety checks
     for (const variant of product.variants) {
       try {
         const variantPrice = parseFloat(variant.price);
         const volumeDiscount = getVolumeDiscount(variantPrice);
-        const totalDiscount = discountPercentage + volumeDiscount;
+        const totalDiscount = Math.min(discountPercentage + volumeDiscount, 90);
         
-        // Calculate prices
-        const compareAtPrice = applyPsychologicalPricing(variantPrice * markupPercentage);
-        const salePrice = applyPsychologicalPricing(variantPrice * (1 - totalDiscount/100));
+        // Ensure prices are valid
+        const compareAtPrice = Math.max(
+          minimumPrice,
+          applyPsychologicalPricing(variantPrice * markupPercentage)
+        );
+        const salePrice = Math.max(
+          minimumPrice,
+          applyPsychologicalPricing(variantPrice * (1 - totalDiscount/100))
+        );
         
+        // Verify prices before update
+        if (salePrice <= 0 || compareAtPrice <= 0) {
+          console.error(`Invalid prices calculated for variant ${variant.id}: sale=${salePrice}, compare=${compareAtPrice}`);
+          continue;
+        }
+
         // Add tags for marketing
         const tags = [
           'sale',
@@ -171,29 +184,16 @@ function verifyWebhook(req) {
 // Function to check if product is in sale collection
 async function isInSaleCollection(productId) {
   try {
-    // Get all collections for the product
-    const collections = await shopify.collectionListing.list({
-      product_id: productId
+    // Get products in sale collection
+    const products = await shopify.product.list({
+      collection_id: process.env.SALE_COLLECTION_ID,
+      limit: 250,
+      fields: 'id'
     });
-    return collections.some(collection => collection.collection_id.toString() === process.env.SALE_COLLECTION_ID);
+    
+    return products.some(p => p.id.toString() === productId.toString());
   } catch (error) {
     console.error('Error checking collection membership:', error);
-    return false;
-  }
-}
-
-// Function to add product to sale collection
-async function addToSaleCollection(productId) {
-  try {
-    // Use collect endpoint instead of customCollection
-    await shopify.collect.create({
-      product_id: productId,
-      collection_id: process.env.SALE_COLLECTION_ID
-    });
-    console.log(`Added product ${productId} to sale collection`);
-    return true;
-  } catch (error) {
-    console.error('Error adding to sale collection:', error);
     return false;
   }
 }
@@ -210,52 +210,15 @@ app.post('/webhooks/products/update', async (req, res) => {
     const data = JSON.parse(req.body);
     console.log('Webhook data:', data);
     
-    // Check if product has sale-related tags
-    const tags = (data.tags || '').split(',').map(tag => tag.trim().toLowerCase());
-    const saleRelatedTags = ['sale', 'clearance', 'discount', 'promotion'];
-    
-    if (saleRelatedTags.some(tag => tags.includes(tag))) {
-      // If product has sale tags but isn't in sale collection, add it
-      if (!(await isInSaleCollection(data.id))) {
-        await addToSaleCollection(data.id);
-      }
+    // Only update price if product is in sale collection
+    if (await isInSaleCollection(data.id)) {
+      await updateProductPrice(data.id);
     }
     
-    await updateProductPrice(data.id);
     res.status(200).send('Webhook processed');
   } catch (error) {
     console.error('Webhook processing error:', error);
     res.status(500).send('Webhook processing failed');
-  }
-});
-
-// Collection update webhook
-app.post('/webhooks/collections/update', async (req, res) => {
-  try {
-    console.log('Received collection update webhook');
-    console.log('Request headers:', req.headers);
-    console.log('Request body:', req.body.toString());
-
-    if (!verifyWebhook(req)) {
-      console.log('Invalid webhook signature');
-      return res.status(401).send('Invalid webhook signature');
-    }
-
-    const data = JSON.parse(req.body);
-    console.log('Webhook data:', data);
-    if (data.id === process.env.SALE_COLLECTION_ID) {
-      const products = await shopify.product.list({
-        collection_id: data.id
-      });
-      
-      for (const product of products) {
-        await updateProductPrice(product.id);
-      }
-    }
-    res.status(200).send('Collection webhook processed');
-  } catch (error) {
-    console.error('Collection webhook processing error:', error);
-    res.status(500).send('Collection webhook processing failed');
   }
 });
 
@@ -334,28 +297,6 @@ app.post('/update-prices', async (req, res) => {
   } catch (error) {
     console.error('Manual update error:', error);
     res.status(500).send('Error updating prices');
-  }
-});
-
-// Add new endpoint to move products to sale collection
-app.post('/move-to-sale', async (req, res) => {
-  try {
-    const { productIds } = req.body;
-    console.log('Moving products to sale collection:', productIds);
-    
-    const results = await Promise.all(productIds.map(async (productId) => {
-      const added = await addToSaleCollection(productId);
-      if (added) {
-        await updateProductPrice(productId);
-        return { productId, status: 'success' };
-      }
-      return { productId, status: 'failed' };
-    }));
-    
-    res.json({ message: 'Products processed', results });
-  } catch (error) {
-    console.error('Error moving products to sale:', error);
-    res.status(500).send('Error moving products to sale');
   }
 });
 
