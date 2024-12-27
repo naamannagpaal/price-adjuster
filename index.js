@@ -171,8 +171,10 @@ function verifyWebhook(req) {
 // Function to check if product is in sale collection
 async function isInSaleCollection(productId) {
   try {
-    const collections = await shopify.product.listCollections(productId);
-    return collections.some(collection => collection.id.toString() === process.env.SALE_COLLECTION_ID);
+    const collects = await shopify.collect.list({
+      product_id: productId
+    });
+    return collects.some(collect => collect.collection_id.toString() === process.env.SALE_COLLECTION_ID);
   } catch (error) {
     console.error('Error checking collection membership:', error);
     return false;
@@ -182,8 +184,10 @@ async function isInSaleCollection(productId) {
 // Function to add product to sale collection
 async function addToSaleCollection(productId) {
   try {
-    // Use custom collection
-    await shopify.customCollection.addProducts(process.env.SALE_COLLECTION_ID, [productId]);
+    await shopify.collect.create({
+      collection_id: process.env.SALE_COLLECTION_ID,
+      product_id: productId
+    });
     console.log(`Added product ${productId} to sale collection`);
     return true;
   } catch (error) {
