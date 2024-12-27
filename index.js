@@ -15,6 +15,16 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
+// Function to get random discount percentage between min and max
+function getRandomDiscount(min = 25, max = 60) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Function to apply psychological pricing (e.g., $99.99 instead of $100)
+function applyPsychologicalPricing(price) {
+  return (Math.floor(price) - 0.01).toFixed(2);
+}
+
 // Function to update product prices
 async function updateProductPrice(productId) {
   try {
@@ -23,7 +33,12 @@ async function updateProductPrice(productId) {
     // Get product details
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
-    const markupPercentage = 1.5; // 50% markup for compare-at price
+    
+    // Calculate markup for compare-at price (showing higher original price)
+    const markupPercentage = 2.0; // 100% markup for better perceived value
+    const discountPercentage = getRandomDiscount();
+    
+    console.log(`Applying ${discountPercentage}% discount`);
 
     // Check if metafield exists
     const metafields = await shopify.metafield.list({
@@ -46,7 +61,7 @@ async function updateProductPrice(productId) {
         key: 'original_price',
         value: JSON.stringify({
           amount: parseFloat(suggestedPrice),
-          currency_code: 'USD' // Make sure this matches your shop's currency
+          currency_code: 'CAD'
         }),
         type: 'money',
         owner_resource: 'product',
@@ -67,14 +82,20 @@ async function updateProductPrice(productId) {
     for (const variant of product.variants) {
       try {
         const variantPrice = parseFloat(variant.price);
-        const compareAtPrice = Math.max(originalPriceValue, variantPrice * markupPercentage).toFixed(2);
+        // Calculate discounted price
+        const compareAtPrice = applyPsychologicalPricing(variantPrice * markupPercentage);
+        const salePrice = applyPsychologicalPricing(variantPrice * (1 - discountPercentage/100));
         
         await shopify.productVariant.update(variant.id, {
-          compare_at_price: compareAtPrice
+          compare_at_price: compareAtPrice,
+          price: salePrice
         });
-        console.log(`Updated variant ${variant.id} compare-at price to ${compareAtPrice}`);
+        console.log(`Updated variant ${variant.id}:`);
+        console.log(`- Compare at price: ${compareAtPrice}`);
+        console.log(`- Sale price: ${salePrice}`);
+        console.log(`- Discount: ${discountPercentage}%`);
       } catch (error) {
-        console.error(`Error updating variant ${variant.id} compare-at price:`, error.response ? error.response.body : error);
+        console.error(`Error updating variant ${variant.id} prices:`, error.response ? error.response.body : error);
       }
     }
     
