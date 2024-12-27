@@ -15,6 +15,42 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
+// Function to get random discount percentage between min and max
+function getRandomDiscount(min = 25, max = 60) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Function to apply psychological pricing (e.g., $99.99 instead of $100)
+function applyPsychologicalPricing(price) {
+  return (Math.floor(price) - 0.01).toFixed(2);
+}
+
+// Function to get seasonal discount bonus
+function getSeasonalBonus() {
+  const date = new Date();
+  const month = date.getMonth();
+  // Extra discounts for holiday seasons
+  if (month === 11) return 10; // December
+  if (month === 6) return 5;   // July (Summer sale)
+  if (month === 3) return 5;   // April (Spring sale)
+  return 0;
+}
+
+// Function to get volume-based discount
+function getVolumeDiscount(price) {
+  if (price >= 100) return 5;  // Extra 5% off for items $100+
+  if (price >= 50) return 3;   // Extra 3% off for items $50+
+  return 0;
+}
+
+// Function to create urgency with time-limited offers
+function isLimitedTimeOffer() {
+  const date = new Date();
+  const hour = date.getHours();
+  // Flash sale during peak shopping hours (12pm-2pm and 7pm-9pm)
+  return (hour >= 12 && hour <= 14) || (hour >= 19 && hour <= 21);
+}
+
 // Function to update product prices
 async function updateProductPrice(productId) {
   try {
@@ -23,7 +59,21 @@ async function updateProductPrice(productId) {
     // Get product details
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
-    const markupPercentage = 1.5; // 50% markup for compare-at price
+    
+    // Calculate markup and discounts
+    const markupPercentage = 2.0; // 100% markup for better perceived value
+    let discountPercentage = getRandomDiscount();
+    
+    // Add seasonal bonus discount
+    const seasonalBonus = getSeasonalBonus();
+    discountPercentage += seasonalBonus;
+    
+    // Add flash sale bonus if during peak hours
+    if (isLimitedTimeOffer()) {
+      discountPercentage += 5; // Additional 5% off during flash sale
+    }
+    
+    console.log(`Applying ${discountPercentage}% total discount (including ${seasonalBonus}% seasonal bonus)`);
 
     // Check if metafield exists
     const metafields = await shopify.metafield.list({
@@ -46,7 +96,7 @@ async function updateProductPrice(productId) {
         key: 'original_price',
         value: JSON.stringify({
           amount: parseFloat(suggestedPrice),
-          currency_code: 'USD' // Make sure this matches your shop's currency
+          currency_code: 'CAD'
         }),
         type: 'money',
         owner_resource: 'product',
@@ -67,14 +117,38 @@ async function updateProductPrice(productId) {
     for (const variant of product.variants) {
       try {
         const variantPrice = parseFloat(variant.price);
-        const compareAtPrice = Math.max(originalPriceValue, variantPrice * markupPercentage).toFixed(2);
+        const volumeDiscount = getVolumeDiscount(variantPrice);
+        const totalDiscount = discountPercentage + volumeDiscount;
         
+        // Calculate prices
+        const compareAtPrice = applyPsychologicalPricing(variantPrice * markupPercentage);
+        const salePrice = applyPsychologicalPricing(variantPrice * (1 - totalDiscount/100));
+        
+        // Add tags for marketing
+        const tags = [
+          'sale',
+          seasonalBonus > 0 ? 'seasonal-sale' : null,
+          isLimitedTimeOffer() ? 'flash-sale' : null,
+          volumeDiscount > 0 ? 'volume-discount' : null
+        ].filter(Boolean);
+
         await shopify.productVariant.update(variant.id, {
-          compare_at_price: compareAtPrice
+          compare_at_price: compareAtPrice,
+          price: salePrice
         });
-        console.log(`Updated variant ${variant.id} compare-at price to ${compareAtPrice}`);
+
+        // Update product tags
+        await shopify.product.update(productId, {
+          tags: [...new Set([...product.tags.split(','), ...tags])].join(',')
+        });
+        
+        console.log(`Updated variant ${variant.id}:`);
+        console.log(`- Compare at price: ${compareAtPrice}`);
+        console.log(`- Sale price: ${salePrice}`);
+        console.log(`- Total discount: ${totalDiscount}%`);
+        console.log(`- Applied tags: ${tags.join(', ')}`);
       } catch (error) {
-        console.error(`Error updating variant ${variant.id} compare-at price:`, error.response ? error.response.body : error);
+        console.error(`Error updating variant ${variant.id} prices:`, error.response ? error.response.body : error);
       }
     }
     
@@ -152,30 +226,72 @@ app.get('/', (req, res) => {
   res.send('Price Adjuster Service Running');
 });
 
-// Manual trigger endpoint
-app.post('/update-prices', async (req, res) => {
+// Function to process all products in a collection
+async function processCollection(collectionId) {
   try {
-    console.log('Manual price update triggered');
+    console.log(`Processing collection: ${collectionId}`);
+    let processedCount = 0;
     let page = 1;
-    let products = [];
+    let hasMoreProducts = true;
 
-    // Fetch all products in the sale collection
-    do {
-      const response = await shopify.product.list({
-        collection_id: process.env.SALE_COLLECTION_ID,
+    while (hasMoreProducts) {
+      console.log(`Fetching page ${page}...`);
+      const products = await shopify.product.list({
+        collection_id: collectionId,
         limit: 250,
         page: page
       });
-      products = response;
-      page++;
 
-      console.log(`Processing page ${page} with ${products.length} products`);
-      for (const product of products) {
-        await updateProductPrice(product.id);
+      if (products.length === 0) {
+        hasMoreProducts = false;
+        continue;
       }
-    } while (products.length > 0);
+
+      console.log(`Found ${products.length} products on page ${page}`);
+      
+      // Process products in parallel with rate limiting
+      const promises = products.map((product, index) => {
+        return new Promise(resolve => {
+          // Add delay between requests to avoid rate limits
+          setTimeout(async () => {
+            try {
+              await updateProductPrice(product.id);
+              processedCount++;
+              console.log(`Progress: ${processedCount} products processed`);
+              resolve();
+            } catch (error) {
+              console.error(`Error processing product ${product.id}:`, error);
+              resolve();
+            }
+          }, index * 500); // 500ms delay between each product
+        });
+      });
+
+      await Promise.all(promises);
+      page++;
+    }
+
+    return processedCount;
+  } catch (error) {
+    console.error('Error processing collection:', error);
+    throw error;
+  }
+}
+
+// Manual trigger endpoint with progress tracking
+app.post('/update-prices', async (req, res) => {
+  try {
+    console.log('Manual price update triggered');
     
-    res.send('Price update completed');
+    // Send initial response
+    res.write('Starting price update process...\n');
+    
+    const collectionId = process.env.SALE_COLLECTION_ID;
+    const processedCount = await processCollection(collectionId);
+    
+    const summary = `Completed processing ${processedCount} products in collection ${collectionId}`;
+    console.log(summary);
+    res.end(summary);
   } catch (error) {
     console.error('Manual update error:', error);
     res.status(500).send('Error updating prices');
