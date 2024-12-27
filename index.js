@@ -18,8 +18,14 @@ const shopify = new Shopify({
 // Verify Shopify webhook
 function verifyWebhook(req) {
   const hmac = req.headers['x-shopify-hmac-sha256'];
+  const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
+
+  if (!secret) {
+    throw new Error('SHOPIFY_WEBHOOK_SECRET is not defined');
+  }
+
   const hash = crypto
-    .createHmac('sha256', process.env.SHOPIFY_WEBHOOK_SECRET)
+    .createHmac('sha256', secret)
     .update(req.body.toString('utf8'))
     .digest('base64');
   return hmac === hash;
