@@ -15,11 +15,9 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
-// Track processed products with longer debounce time
 const processedProducts = new Set();
 const DEBOUNCE_TIME = 30000; // 30 seconds
 
-// Function to get a strategic discount percentage
 function getStrategicDiscount() {
   const appealingDiscounts = [
     29.99,
@@ -36,6 +34,20 @@ function calculateMarkup(desiredDiscountPercentage) {
   return 100 / (100 - desiredDiscountPercentage);
 }
 
+async function clearCompareAtPrice(productId) {
+  try {
+    const product = await shopify.product.get(productId);
+    for (const variant of product.variants) {
+      await shopify.productVariant.update(variant.id, {
+        compare_at_price: null
+      });
+    }
+    console.log(`Cleared compare-at price for product ${productId}`);
+  } catch (error) {
+    console.error(`Error clearing compare-at price for product ${productId}:`, error);
+  }
+}
+
 async function updateProductPrice(productId) {
   if (processedProducts.has(productId)) {
     console.log(`Skipping product ${productId} - recently processed`);
@@ -43,6 +55,19 @@ async function updateProductPrice(productId) {
   }
 
   try {
+    // Check if product is in Sale collection
+    const productCollections = await shopify.collection.list({
+      product_id: productId
+    });
+
+    const isInSaleCollection = productCollections.some(c => c.id === process.env.SALE_COLLECTION_ID);
+
+    if (!isInSaleCollection) {
+      console.log(`Skipping product ${productId} - not in Sale collection`);
+      await clearCompareAtPrice(productId);
+      return;
+    }
+
     processedProducts.add(productId);
     console.log('Processing product:', productId);
     
@@ -138,7 +163,6 @@ app.post('/webhooks/collections/update', async (req, res) => {
         limit: 250
       });
       
-      // Process only unique products
       const uniqueProducts = [...new Set(products.map(p => p.id))];
       
       for (const productId of uniqueProducts) {
