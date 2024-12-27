@@ -86,6 +86,9 @@ function verifyWebhook(req) {
 app.post('/webhooks/products/update', async (req, res) => {
   try {
     console.log('Received product update webhook');
+    console.log('Request headers:', req.headers);
+    console.log('Request body:', req.body.toString());
+
     if (!verifyWebhook(req)) {
       console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
@@ -105,6 +108,9 @@ app.post('/webhooks/products/update', async (req, res) => {
 app.post('/webhooks/collections/update', async (req, res) => {
   try {
     console.log('Received collection update webhook');
+    console.log('Request headers:', req.headers);
+    console.log('Request body:', req.body.toString());
+
     if (!verifyWebhook(req)) {
       console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
