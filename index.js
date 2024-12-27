@@ -15,31 +15,39 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
+// Track processed products to prevent duplicates
+const processedProducts = new Set();
+const DEBOUNCE_TIME = 5000; // 5 seconds
+
 // Function to get a strategic discount percentage between 25% and 60%
 function getStrategicDiscount() {
-  // Common psychologically appealing discount numbers
   const appealingDiscounts = [
-    29.99, // Just under 30%
-    39.99, // Just under 40%
-    44.99, // Just under 45%
-    49.99, // Just under 50%
-    54.99, // Just under 55%
-    59.99  // Just under 60%
+    29.99,
+    39.99,
+    44.99,
+    49.99,
+    54.99,
+    59.99
   ];
-  
-  // Randomly select from appealing discounts
   return appealingDiscounts[Math.floor(Math.random() * appealingDiscounts.length)];
 }
 
 // Function to calculate markup based on desired discount
 function calculateMarkup(desiredDiscountPercentage) {
-  // Convert percentage to decimal and calculate markup
   return 100 / (100 - desiredDiscountPercentage);
 }
 
 // Function to update product prices
 async function updateProductPrice(productId) {
+  // Check if product was recently processed
+  if (processedProducts.has(productId)) {
+    console.log(`Skipping product ${productId} - recently processed`);
+    return;
+  }
+
   try {
+    // Add product to processed set
+    processedProducts.add(productId);
     console.log('Processing product:', productId);
     
     // Get product details
@@ -95,8 +103,15 @@ async function updateProductPrice(productId) {
     }
     
     console.log('Successfully processed product:', product.title);
+
+    // Remove product from processed set after DEBOUNCE_TIME
+    setTimeout(() => {
+      processedProducts.delete(productId);
+    }, DEBOUNCE_TIME);
   } catch (error) {
     console.error('Error updating product price:', error.response ? error.response.body : error);
+    // Remove from processed set if there was an error
+    processedProducts.delete(productId);
   }
 }
 
@@ -114,8 +129,6 @@ function verifyWebhook(req) {
 app.post('/webhooks/products/update', async (req, res) => {
   try {
     console.log('Received product update webhook');
-    console.log('Request headers:', req.headers);
-    console.log('Request body:', req.body.toString());
 
     if (!verifyWebhook(req)) {
       console.log('Invalid webhook signature');
@@ -123,7 +136,6 @@ app.post('/webhooks/products/update', async (req, res) => {
     }
 
     const data = JSON.parse(req.body);
-    console.log('Webhook data:', data);
     await updateProductPrice(data.id);
     res.status(200).send('Webhook processed');
   } catch (error) {
@@ -136,8 +148,6 @@ app.post('/webhooks/products/update', async (req, res) => {
 app.post('/webhooks/collections/update', async (req, res) => {
   try {
     console.log('Received collection update webhook');
-    console.log('Request headers:', req.headers);
-    console.log('Request body:', req.body.toString());
 
     if (!verifyWebhook(req)) {
       console.log('Invalid webhook signature');
@@ -145,7 +155,6 @@ app.post('/webhooks/collections/update', async (req, res) => {
     }
 
     const data = JSON.parse(req.body);
-    console.log('Webhook data:', data);
     if (data.id === process.env.SALE_COLLECTION_ID) {
       const products = await shopify.product.list({
         collection_id: data.id
@@ -168,28 +177,30 @@ app.get('/', (req, res) => {
   res.send('Price Adjuster Service Running');
 });
 
-// Manual trigger endpoint
+// Manual trigger endpoint with improved pagination
 app.post('/update-prices', async (req, res) => {
   try {
     console.log('Manual price update triggered');
     let page = 1;
-    let products = [];
+    let hasMore = true;
 
-    // Fetch all products in the sale collection
-    do {
+    while (hasMore) {
       const response = await shopify.product.list({
         collection_id: process.env.SALE_COLLECTION_ID,
         limit: 250,
         page: page
       });
-      products = response;
-      page++;
 
-      console.log(`Processing page ${page} with ${products.length} products`);
-      for (const product of products) {
-        await updateProductPrice(product.id);
+      if (response.length === 0) {
+        hasMore = false;
+      } else {
+        console.log(`Processing page ${page} with ${response.length} products`);
+        for (const product of response) {
+          await updateProductPrice(product.id);
+        }
+        page++;
       }
-    } while (products.length > 0);
+    }
     
     res.send('Price update completed');
   } catch (error) {
