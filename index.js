@@ -22,7 +22,7 @@ async function updateProductPrice(productId) {
     
     // Get product details
     const product = await shopify.product.get(productId);
-    const basePrice = product.variants[0].price;
+    const basePrice = parseFloat(product.variants[0].price);
 
     // Check if metafield exists
     const metafields = await shopify.metafield.list({
@@ -47,6 +47,13 @@ async function updateProductPrice(productId) {
         owner_resource: 'product',
         owner_id: productId
       });
+    }
+
+    const originalPriceValue = parseFloat(originalPrice.value);
+
+    // Validate compare-at price
+    if (originalPriceValue <= basePrice) {
+      throw new Error(`Invalid compare_at_price: ${originalPriceValue} must be greater than base price: ${basePrice}`);
     }
 
     // Update compare-at price for all variants
@@ -122,13 +129,23 @@ app.get('/', (req, res) => {
 // Manual trigger endpoint
 app.post('/update-prices', async (req, res) => {
   try {
-    const products = await shopify.product.list({
-      collection_id: process.env.SALE_COLLECTION_ID
-    });
+    let page = 1;
+    let products = [];
 
-    for (const product of products) {
-      await updateProductPrice(product.id);
-    }
+    // Fetch all products in the sale collection
+    do {
+      const response = await shopify.product.list({
+        collection_id: process.env.SALE_COLLECTION_ID,
+        limit: 250,
+        page: page
+      });
+      products = response;
+      page++;
+
+      for (const product of products) {
+        await updateProductPrice(product.id);
+      }
+    } while (products.length > 0);
     
     res.send('Price update completed');
   } catch (error) {
