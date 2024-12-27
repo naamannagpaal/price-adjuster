@@ -168,13 +168,36 @@ function verifyWebhook(req) {
   return hmac === hash;
 }
 
-// Product update webhook
+// Function to check if product is in sale collection
+async function isInSaleCollection(productId) {
+  try {
+    const collects = await shopify.productCollectionListing.list(productId);
+    return collects.some(collect => collect.collection_id.toString() === process.env.SALE_COLLECTION_ID);
+  } catch (error) {
+    console.error('Error checking collection membership:', error);
+    return false;
+  }
+}
+
+// Function to add product to sale collection
+async function addToSaleCollection(productId) {
+  try {
+    await shopify.collect.create({
+      product_id: productId,
+      collection_id: process.env.SALE_COLLECTION_ID
+    });
+    console.log(`Added product ${productId} to sale collection`);
+    return true;
+  } catch (error) {
+    console.error('Error adding to sale collection:', error);
+    return false;
+  }
+}
+
+// Modified product update webhook
 app.post('/webhooks/products/update', async (req, res) => {
   try {
     console.log('Received product update webhook');
-    console.log('Request headers:', req.headers);
-    console.log('Request body:', req.body.toString());
-
     if (!verifyWebhook(req)) {
       console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
@@ -182,6 +205,18 @@ app.post('/webhooks/products/update', async (req, res) => {
 
     const data = JSON.parse(req.body);
     console.log('Webhook data:', data);
+    
+    // Check if product has sale-related tags
+    const tags = (data.tags || '').split(',').map(tag => tag.trim().toLowerCase());
+    const saleRelatedTags = ['sale', 'clearance', 'discount', 'promotion'];
+    
+    if (saleRelatedTags.some(tag => tags.includes(tag))) {
+      // If product has sale tags but isn't in sale collection, add it
+      if (!(await isInSaleCollection(data.id))) {
+        await addToSaleCollection(data.id);
+      }
+    }
+    
     await updateProductPrice(data.id);
     res.status(200).send('Webhook processed');
   } catch (error) {
@@ -297,6 +332,76 @@ app.post('/update-prices', async (req, res) => {
     res.status(500).send('Error updating prices');
   }
 });
+
+// Add new endpoint to move products to sale collection
+app.post('/move-to-sale', async (req, res) => {
+  try {
+    const { productIds } = req.body;
+    console.log('Moving products to sale collection:', productIds);
+    
+    const results = await Promise.all(productIds.map(async (productId) => {
+      const added = await addToSaleCollection(productId);
+      if (added) {
+        await updateProductPrice(productId);
+        return { productId, status: 'success' };
+      }
+      return { productId, status: 'failed' };
+    }));
+    
+    res.json({ message: 'Products processed', results });
+  } catch (error) {
+    console.error('Error moving products to sale:', error);
+    res.status(500).send('Error moving products to sale');
+  }
+});
+
+// Add scheduled task to check for products that should be on sale
+async function checkForSaleProducts() {
+  try {
+    console.log('Checking for products that should be on sale...');
+    
+    // Get all products with sale-related tags
+    let page = 1;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const products = await shopify.product.list({
+        limit: 250,
+        page: page,
+        // Filter by tags if possible
+        fields: 'id,tags'
+      });
+      
+      if (products.length === 0) {
+        hasMore = false;
+        continue;
+      }
+      
+      for (const product of products) {
+        const tags = (product.tags || '').split(',').map(tag => tag.trim().toLowerCase());
+        const shouldBeOnSale = tags.some(tag => ['sale', 'clearance', 'discount', 'promotion'].includes(tag));
+        
+        if (shouldBeOnSale && !(await isInSaleCollection(product.id))) {
+          console.log(`Product ${product.id} should be on sale, adding to sale collection...`);
+          await addToSaleCollection(product.id);
+          await updateProductPrice(product.id);
+        }
+      }
+      
+      page++;
+    }
+    
+    console.log('Finished checking for sale products');
+  } catch (error) {
+    console.error('Error in scheduled check:', error);
+  }
+}
+
+// Run the check every 6 hours
+setInterval(checkForSaleProducts, 6 * 60 * 60 * 1000);
+
+// Run initial check on startup
+checkForSaleProducts();
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
