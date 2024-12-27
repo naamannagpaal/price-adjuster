@@ -55,16 +55,16 @@ function applyPsychologicalPricing(price) {
 
 // Function to calculate sale price
 function calculateSalePrice(originalPrice, totalDiscount) {
-  // Ensure minimum discount is 10% and maximum is 90%
   const boundedDiscount = Math.min(Math.max(totalDiscount, 10), 90);
   const discountMultiplier = (100 - boundedDiscount) / 100;
-  return Math.max(originalPrice * discountMultiplier, 0.01);
+  // Ensure sale price is at least 1% less than original price
+  return Math.max(originalPrice * discountMultiplier, originalPrice * 0.01);
 }
 
 // Function to calculate compare-at price
 function calculateCompareAtPrice(originalPrice) {
-  // Compare-at price should be higher than original price
-  return originalPrice * 2;
+  // Compare-at price should be at least 10% higher than original price
+  return originalPrice * 2.5; // Increased markup for better perceived value
 }
 
 async function updateProductPrice(productId) {
@@ -98,30 +98,35 @@ async function updateProductPrice(productId) {
         const volumeDiscount = getVolumeDiscount(originalPrice);
         const totalDiscount = Math.min(discountPercentage + volumeDiscount, 90);
         
-        // Calculate new prices ensuring proper ratios
+        // Calculate new prices
         const compareAtPrice = calculateCompareAtPrice(originalPrice);
         const salePrice = calculateSalePrice(originalPrice, totalDiscount);
         
-        // Format prices with psychological pricing
+        // Format prices
         const formattedCompareAtPrice = applyPsychologicalPricing(compareAtPrice);
         const formattedSalePrice = applyPsychologicalPricing(salePrice);
         
-        // Verify prices are valid and maintain proper relationship
-        if (parseFloat(formattedSalePrice) >= parseFloat(formattedCompareAtPrice)) {
-          console.error(`Invalid price relationship for variant ${variant.id}`);
+        // Validate price relationships
+        if (parseFloat(formattedSalePrice) <= 0 || parseFloat(formattedCompareAtPrice) <= 0) {
+          console.error(`Invalid prices for variant ${variant.id}: sale=${formattedSalePrice}, compare=${formattedCompareAtPrice}`);
           continue;
         }
 
-        await shopify.productVariant.update(variant.id, {
-          compare_at_price: formattedCompareAtPrice,
-          price: formattedSalePrice
-        });
+        // Only apply discount if we maintain proper price relationships
+        if (parseFloat(formattedSalePrice) < parseFloat(formattedCompareAtPrice)) {
+          await shopify.productVariant.update(variant.id, {
+            compare_at_price: formattedCompareAtPrice,
+            price: formattedSalePrice
+          });
 
-        console.log(`Updated variant ${variant.id}:`);
-        console.log(`- Original price: ${originalPrice}`);
-        console.log(`- Compare at price: ${formattedCompareAtPrice}`);
-        console.log(`- Sale price: ${formattedSalePrice}`);
-        console.log(`- Total discount: ${totalDiscount}%`);
+          console.log(`Updated variant ${variant.id}:`);
+          console.log(`- Original price: ${originalPrice}`);
+          console.log(`- Compare at price: ${formattedCompareAtPrice}`);
+          console.log(`- Sale price: ${formattedSalePrice}`);
+          console.log(`- Total discount: ${totalDiscount}%`);
+        } else {
+          console.log(`Skipping variant ${variant.id} - prices would not show proper discount`);
+        }
       } catch (error) {
         console.error(`Error updating variant ${variant.id} prices:`, error.response?.body || error);
       }
