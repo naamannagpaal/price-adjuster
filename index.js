@@ -30,12 +30,22 @@ async function updateProductPrice(productId) {
   try {
     console.log('Processing product:', productId);
     
-    // Get product details
-    const product = await shopify.product.get(productId);
+    // Get product details and handle 404 gracefully
+    let product;
+    try {
+      product = await shopify.product.get(productId);
+    } catch (error) {
+      if (error.response?.status === 404) {
+        console.log(`Product ${productId} not found, skipping`);
+        return;
+      }
+      throw error;
+    }
+
     const basePrice = parseFloat(product.variants[0].price);
     
-    // Calculate markup for compare-at price (showing higher original price)
-    const markupPercentage = 2.0; // 100% markup for better perceived value
+    // Calculate markup for compare-at price
+    const markupPercentage = 2.0;
     const discountPercentage = getRandomDiscount();
     
     console.log(`Applying ${discountPercentage}% discount`);
@@ -52,7 +62,7 @@ async function updateProductPrice(productId) {
       m => m.namespace === 'price_automation' && m.key === 'original_price'
     );
 
-    // If no metafield exists, create it with a markup
+    // If no metafield exists, create it with USD currency
     if (!originalPrice) {
       const suggestedPrice = (basePrice * markupPercentage).toFixed(2);
       console.log('Creating metafield with original price:', suggestedPrice);
@@ -61,7 +71,7 @@ async function updateProductPrice(productId) {
         key: 'original_price',
         value: JSON.stringify({
           amount: parseFloat(suggestedPrice),
-          currency_code: 'CAD'
+          currency_code: 'USD'  // Changed from CAD to USD
         }),
         type: 'money',
         owner_resource: 'product',
@@ -102,6 +112,7 @@ async function updateProductPrice(productId) {
     console.log('Successfully processed product:', product.title);
   } catch (error) {
     console.error('Error updating product price:', error.response ? error.response.body : error);
+    // Don't rethrow to allow processing other products
   }
 }
 
