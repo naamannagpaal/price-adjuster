@@ -15,6 +15,28 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
+// Function to get a strategic discount percentage between 25% and 60%
+function getStrategicDiscount() {
+  // Common psychologically appealing discount numbers
+  const appealingDiscounts = [
+    29.99, // Just under 30%
+    39.99, // Just under 40%
+    44.99, // Just under 45%
+    49.99, // Just under 50%
+    54.99, // Just under 55%
+    59.99  // Just under 60%
+  ];
+  
+  // Randomly select from appealing discounts
+  return appealingDiscounts[Math.floor(Math.random() * appealingDiscounts.length)];
+}
+
+// Function to calculate markup based on desired discount
+function calculateMarkup(desiredDiscountPercentage) {
+  // Convert percentage to decimal and calculate markup
+  return 100 / (100 - desiredDiscountPercentage);
+}
+
 // Function to update product prices
 async function updateProductPrice(productId) {
   try {
@@ -23,8 +45,14 @@ async function updateProductPrice(productId) {
     // Get product details
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
-    const markupPercentage = 1.5; // 50% markup for compare-at price
-
+    
+    // Get strategic discount and calculate markup
+    const discountPercentage = getStrategicDiscount();
+    const markupMultiplier = calculateMarkup(discountPercentage);
+    
+    // Calculate compare-at price and round to .99
+    const compareAtPrice = Math.ceil(basePrice * markupMultiplier * 100 - 1) / 100;
+    
     // Check if metafield exists
     const metafields = await shopify.metafield.list({
       metafield: {
@@ -37,16 +65,15 @@ async function updateProductPrice(productId) {
       m => m.namespace === 'price_automation' && m.key === 'original_price'
     );
 
-    // If no metafield exists, create it with a markup
+    // Create or update metafield
     if (!originalPrice) {
-      const suggestedPrice = (basePrice * markupPercentage).toFixed(2);
-      console.log('Creating metafield with original price:', suggestedPrice);
+      console.log(`Creating metafield with compare-at price: ${compareAtPrice} (${discountPercentage}% off)`);
       originalPrice = await shopify.metafield.create({
         namespace: 'price_automation',
         key: 'original_price',
         value: JSON.stringify({
-          amount: parseFloat(suggestedPrice),
-          currency_code: 'USD' // Make sure this matches your shop's currency
+          amount: compareAtPrice,
+          currency_code: 'USD'
         }),
         type: 'money',
         owner_resource: 'product',
@@ -54,27 +81,16 @@ async function updateProductPrice(productId) {
       });
     }
 
-    let originalPriceValue = parseFloat(JSON.parse(originalPrice.value).amount);
-
-    // Ensure compare-at price is higher than base price
-    if (originalPriceValue <= basePrice) {
-      originalPriceValue = (basePrice * markupPercentage).toFixed(2);
-      console.log(`Adjusted compare_at_price to ${originalPriceValue} (${markupPercentage}x markup from ${basePrice})`);
-    }
-
     // Update compare-at price for all variants
     console.log('Updating compare-at prices');
     for (const variant of product.variants) {
       try {
-        const variantPrice = parseFloat(variant.price);
-        const compareAtPrice = Math.max(originalPriceValue, variantPrice * markupPercentage).toFixed(2);
-        
         await shopify.productVariant.update(variant.id, {
-          compare_at_price: compareAtPrice
+          compare_at_price: compareAtPrice.toFixed(2)
         });
-        console.log(`Updated variant ${variant.id} compare-at price to ${compareAtPrice}`);
+        console.log(`Updated variant ${variant.id} with ${discountPercentage}% discount (${compareAtPrice} → ${variant.price})`);
       } catch (error) {
-        console.error(`Error updating variant ${variant.id} compare-at price:`, error.response ? error.response.body : error);
+        console.error(`Error updating variant ${variant.id}:`, error.response ? error.response.body : error);
       }
     }
     
