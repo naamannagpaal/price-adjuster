@@ -48,6 +48,20 @@ async function clearCompareAtPrice(productId) {
   }
 }
 
+async function checkProductInCollection(productId, collectionId) {
+  try {
+    const products = await shopify.product.list({
+      collection_id: collectionId,
+      limit: 1,
+      ids: productId
+    });
+    return products.length > 0;
+  } catch (error) {
+    console.error('Error checking product in collection:', error);
+    return false;
+  }
+}
+
 async function updateProductPrice(productId) {
   if (processedProducts.has(productId)) {
     console.log(`Skipping product ${productId} - recently processed`);
@@ -56,14 +70,11 @@ async function updateProductPrice(productId) {
 
   try {
     // Check if product is in Sale collection
-    const productCollections = await shopify.collection.list({
-      product_id: productId
-    });
-
-    const isInSaleCollection = productCollections.some(c => c.id === process.env.SALE_COLLECTION_ID);
+    console.log(`Checking if product ${productId} is in Sale collection ${process.env.SALE_COLLECTION_ID}`);
+    const isInSaleCollection = await checkProductInCollection(productId, process.env.SALE_COLLECTION_ID);
 
     if (!isInSaleCollection) {
-      console.log(`Skipping product ${productId} - not in Sale collection`);
+      console.log(`Product ${productId} not in Sale collection - clearing compare-at price`);
       await clearCompareAtPrice(productId);
       return;
     }
@@ -182,6 +193,7 @@ app.get('/', (req, res) => {
 
 app.post('/update-prices', async (req, res) => {
   try {
+    console.log('Starting manual price update for Sale collection');
     let page = 1;
     let hasMore = true;
     const processedIds = new Set();
