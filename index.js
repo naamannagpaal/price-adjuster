@@ -20,6 +20,32 @@ function getRandomDiscount(min = 25, max = 60) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+// Function to get seasonal discount bonus
+function getSeasonalBonus() {
+  const date = new Date();
+  const month = date.getMonth();
+  // Extra discounts for holiday seasons
+  if (month === 11) return 10; // December
+  if (month === 6) return 5;   // July (Summer sale)
+  if (month === 3) return 5;   // April (Spring sale)
+  return 0;
+}
+
+// Function to get volume-based discount
+function getVolumeDiscount(price) {
+  if (price >= 100) return 5;  // Extra 5% off for items $100+
+  if (price >= 50) return 3;   // Extra 3% off for items $50+
+  return 0;
+}
+
+// Function to create urgency with time-limited offers
+function isLimitedTimeOffer() {
+  const date = new Date();
+  const hour = date.getHours();
+  // Flash sale during peak shopping hours (12pm-2pm and 7pm-9pm)
+  return (hour >= 12 && hour <= 14) || (hour >= 19 && hour <= 21);
+}
+
 // Function to apply psychological pricing (e.g., $99.99 instead of $100)
 // Modify the price calculation function to ensure no negative values
 function applyPsychologicalPricing(price) {
