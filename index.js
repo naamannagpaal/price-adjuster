@@ -142,6 +142,7 @@ app.post('/update-prices', async (req, res) => {
       products = response;
       page++;
 
+      console.log(`Processing page ${page} with ${products.length} products`);
       for (const product of products) {
         await updateProductPrice(product.id);
       }
