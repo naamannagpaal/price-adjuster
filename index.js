@@ -23,6 +23,7 @@ async function updateProductPrice(productId) {
     // Get product details
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
+    const markupPercentage = 1.5; // 50% markup for compare-at price
 
     // Check if metafield exists
     const metafields = await shopify.metafield.list({
@@ -36,14 +37,15 @@ async function updateProductPrice(productId) {
       m => m.namespace === 'price_automation' && m.key === 'original_price'
     );
 
-    // If no metafield exists, create it
+    // If no metafield exists, create it with a markup
     if (!originalPrice) {
-      console.log('Creating metafield with original price:', basePrice);
+      const suggestedPrice = (basePrice * markupPercentage).toFixed(2);
+      console.log('Creating metafield with original price:', suggestedPrice);
       originalPrice = await shopify.metafield.create({
         namespace: 'price_automation',
         key: 'original_price',
-        value: basePrice.toString(),
-        type: 'decimal',
+        value: suggestedPrice,
+        type: 'money', // Changed from 'number_decimal' to 'money'
         owner_resource: 'product',
         owner_id: productId
       });
@@ -51,22 +53,25 @@ async function updateProductPrice(productId) {
 
     let originalPriceValue = parseFloat(originalPrice.value);
 
-    // Ensure compare-at price is greater than base price
+    // Ensure compare-at price is higher than base price
     if (originalPriceValue <= basePrice) {
-      originalPriceValue = basePrice + 0.01; // Set compare-at price slightly higher than base price
-      console.log(`Adjusted compare_at_price to ${originalPriceValue} to be greater than base price ${basePrice}`);
+      originalPriceValue = (basePrice * markupPercentage).toFixed(2);
+      console.log(`Adjusted compare_at_price to ${originalPriceValue} (${markupPercentage}x markup from ${basePrice})`);
     }
 
     // Update compare-at price for all variants
     console.log('Updating compare-at prices');
     for (const variant of product.variants) {
       try {
+        const variantPrice = parseFloat(variant.price);
+        const compareAtPrice = Math.max(originalPriceValue, variantPrice * markupPercentage).toFixed(2);
+        
         await shopify.productVariant.update(variant.id, {
-          compare_at_price: originalPriceValue.toString()
+          compare_at_price: compareAtPrice
         });
-        console.log(`Updated variant ${variant.id} compare-at price to ${originalPriceValue}`);
+        console.log(`Updated variant ${variant.id} compare-at price to ${compareAtPrice}`);
       } catch (error) {
-        console.error(`Error updating variant ${variant.id} compare-at price:`, error.response.body);
+        console.error(`Error updating variant ${variant.id} compare-at price:`, error.response ? error.response.body : error);
       }
     }
     
