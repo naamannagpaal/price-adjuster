@@ -49,20 +49,21 @@ async function updateProductPrice(productId) {
       });
     }
 
-    const originalPriceValue = parseFloat(originalPrice.value);
+    let originalPriceValue = parseFloat(originalPrice.value);
 
-    // Validate compare-at price
+    // Ensure compare-at price is greater than base price
     if (originalPriceValue <= basePrice) {
-      throw new Error(`Invalid compare_at_price: ${originalPriceValue} must be greater than base price: ${basePrice}`);
+      originalPriceValue = basePrice + 0.01; // Set compare-at price slightly higher than base price
+      console.log(`Adjusted compare_at_price to ${originalPriceValue} to be greater than base price ${basePrice}`);
     }
 
     // Update compare-at price for all variants
     console.log('Updating compare-at prices');
     for (const variant of product.variants) {
       await shopify.productVariant.update(variant.id, {
-        compare_at_price: originalPrice.value
+        compare_at_price: originalPriceValue.toString()
       });
-      console.log(`Updated variant ${variant.id} compare-at price to ${originalPrice.value}`);
+      console.log(`Updated variant ${variant.id} compare-at price to ${originalPriceValue}`);
     }
     
     console.log('Successfully processed product:', product.title);
