@@ -51,7 +51,6 @@ function determineProductType(product) {
   const title = product.title.toLowerCase();
   const productType = product.product_type.toLowerCase();
   
-  // Determine category based on product title and type
   if (title.includes('dress')) {
     if (title.includes('party') || title.includes('evening')) return 'party_evening_dress';
     if (title.includes('maxi') || title.includes('midi')) return 'maxi_midi_dress';
@@ -85,18 +84,15 @@ function calculateDiscount(basePrice, productType) {
     finalMarkup = markup.max;
   }
 
-  // Add small random variation
   const variation = (Math.random() * 0.1) - 0.05; // ±5%
   finalMarkup += variation;
   
-  // Ensure markup is positive and reasonable
   finalMarkup = Math.max(1.2, Math.min(finalMarkup, 3.0));
   
   return ((1 - 1/finalMarkup) * 100).toFixed(2);
 }
 
 function roundToNicePrice(price) {
-  // Round to .99 endings
   return Math.ceil(price) - 0.01;
 }
 
@@ -121,14 +117,14 @@ async function updateProductPrice(productId) {
   }
 
   try {
-    // Check if product is in Sale collection
     console.log(`Checking if product ${productId} is in Sale collection ${process.env.SALE_COLLECTION_ID}`);
-    const productCollections = await shopify.collection.list({
-      product_id: productId
+    
+    const collectionProducts = await shopify.collection.products.list({
+      collection_id: process.env.SALE_COLLECTION_ID
     });
 
-    const isInSaleCollection = productCollections.some(c => 
-      c.id.toString() === process.env.SALE_COLLECTION_ID.toString()
+    const isInSaleCollection = collectionProducts.some(p => 
+      p.id.toString() === productId.toString()
     );
 
     if (!isInSaleCollection) {
@@ -143,17 +139,14 @@ async function updateProductPrice(productId) {
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
     
-    // Determine product type and calculate appropriate discount
     const productType = determineProductType(product);
     const discountPercentage = calculateDiscount(basePrice, productType);
     
-    // Calculate compare-at price
     const markup = 100 / (100 - parseFloat(discountPercentage));
     const compareAtPrice = roundToNicePrice(basePrice * markup);
     
     console.log(`Product Type: ${productType}, Base Price: ${basePrice}, Discount: ${discountPercentage}%, Compare At: ${compareAtPrice}`);
 
-    // Update metafields
     const metafields = await shopify.metafield.list({
       metafield: {
         owner_id: productId,
@@ -180,7 +173,6 @@ async function updateProductPrice(productId) {
       });
     }
 
-    // Update all variants
     for (const variant of product.variants) {
       try {
         const variantBasePrice = parseFloat(variant.price);
@@ -238,7 +230,7 @@ app.post('/webhooks/collections/update', async (req, res) => {
 
     const data = JSON.parse(req.body);
     if (data.id === process.env.SALE_COLLECTION_ID) {
-      const products = await shopify.product.list({
+      const products = await shopify.collection.products.list({
         collection_id: data.id,
         limit: 250
       });
@@ -268,7 +260,7 @@ app.post('/update-prices', async (req, res) => {
     const processedIds = new Set();
 
     while (hasMore) {
-      const response = await shopify.product.list({
+      const response = await shopify.collection.products.list({
         collection_id: process.env.SALE_COLLECTION_ID,
         limit: 250,
         page: page
