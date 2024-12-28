@@ -14,6 +14,15 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
+// Debug: Log available Shopify methods
+console.log('Available Shopify methods:', Object.keys(shopify));
+console.log('API Version:', shopify.apiVersion);
+
+// Test shop connection
+shopify.shop.get()
+  .then(shop => console.log('Shop connection successful:', shop.name))
+  .catch(err => console.error('Shop connection error:', err));
+
 const processedProducts = new Set();
 const DEBOUNCE_TIME = 30000; // 30 seconds
 
@@ -119,8 +128,9 @@ async function updateProductPrice(productId) {
   try {
     console.log(`Checking if product ${productId} is in Sale collection ${process.env.SALE_COLLECTION_ID}`);
     
-    const collectionProducts = await shopify.collection.products.list({
-      collection_id: process.env.SALE_COLLECTION_ID
+    const collectionProducts = await shopify.product.list({
+      collection_id: process.env.SALE_COLLECTION_ID,
+      limit: 250
     });
 
     const isInSaleCollection = collectionProducts.some(p => 
@@ -230,7 +240,7 @@ app.post('/webhooks/collections/update', async (req, res) => {
 
     const data = JSON.parse(req.body);
     if (data.id === process.env.SALE_COLLECTION_ID) {
-      const products = await shopify.collection.products.list({
+      const products = await shopify.product.list({
         collection_id: data.id,
         limit: 250
       });
@@ -260,7 +270,7 @@ app.post('/update-prices', async (req, res) => {
     const processedIds = new Set();
 
     while (hasMore) {
-      const response = await shopify.collection.products.list({
+      const response = await shopify.product.list({
         collection_id: process.env.SALE_COLLECTION_ID,
         limit: 250,
         page: page
