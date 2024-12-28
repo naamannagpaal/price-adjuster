@@ -15,9 +15,11 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
+// Track processed products to prevent duplicates
 const processedProducts = new Set();
-const DEBOUNCE_TIME = 30000; // 30 seconds
+const DEBOUNCE_TIME = 5000; // 5 seconds
 
+// Function to get a strategic discount percentage between 25% and 60%
 function getStrategicDiscount() {
   const appealingDiscounts = [
     29.99,
@@ -30,65 +32,36 @@ function getStrategicDiscount() {
   return appealingDiscounts[Math.floor(Math.random() * appealingDiscounts.length)];
 }
 
+// Function to calculate markup based on desired discount
 function calculateMarkup(desiredDiscountPercentage) {
   return 100 / (100 - desiredDiscountPercentage);
 }
 
-async function clearCompareAtPrice(productId) {
-  try {
-    const product = await shopify.product.get(productId);
-    for (const variant of product.variants) {
-      await shopify.productVariant.update(variant.id, {
-        compare_at_price: null
-      });
-    }
-    console.log(`Cleared compare-at price for product ${productId}`);
-  } catch (error) {
-    console.error(`Error clearing compare-at price for product ${productId}:`, error);
-  }
-}
-
-async function checkProductInCollection(productId, collectionId) {
-  try {
-    const products = await shopify.product.list({
-      collection_id: collectionId,
-      limit: 1,
-      ids: productId
-    });
-    return products.length > 0;
-  } catch (error) {
-    console.error('Error checking product in collection:', error);
-    return false;
-  }
-}
-
+// Function to update product prices
 async function updateProductPrice(productId) {
+  // Check if product was recently processed
   if (processedProducts.has(productId)) {
     console.log(`Skipping product ${productId} - recently processed`);
     return;
   }
 
   try {
-    // Check if product is in Sale collection
-    console.log(`Checking if product ${productId} is in Sale collection ${process.env.SALE_COLLECTION_ID}`);
-    const isInSaleCollection = await checkProductInCollection(productId, process.env.SALE_COLLECTION_ID);
-
-    if (!isInSaleCollection) {
-      console.log(`Product ${productId} not in Sale collection - clearing compare-at price`);
-      await clearCompareAtPrice(productId);
-      return;
-    }
-
+    // Add product to processed set
     processedProducts.add(productId);
     console.log('Processing product:', productId);
     
+    // Get product details
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
     
+    // Get strategic discount and calculate markup
     const discountPercentage = getStrategicDiscount();
     const markupMultiplier = calculateMarkup(discountPercentage);
+    
+    // Calculate compare-at price and round to .99
     const compareAtPrice = Math.ceil(basePrice * markupMultiplier * 100 - 1) / 100;
     
+    // Check if metafield exists
     const metafields = await shopify.metafield.list({
       metafield: {
         owner_id: productId,
@@ -100,6 +73,7 @@ async function updateProductPrice(productId) {
       m => m.namespace === 'price_automation' && m.key === 'original_price'
     );
 
+    // Create or update metafield
     if (!originalPrice) {
       console.log(`Creating metafield with compare-at price: ${compareAtPrice} (${discountPercentage}% off)`);
       originalPrice = await shopify.metafield.create({
@@ -115,6 +89,8 @@ async function updateProductPrice(productId) {
       });
     }
 
+    // Update compare-at price for all variants
+    console.log('Updating compare-at prices');
     for (const variant of product.variants) {
       try {
         await shopify.productVariant.update(variant.id, {
@@ -122,21 +98,24 @@ async function updateProductPrice(productId) {
         });
         console.log(`Updated variant ${variant.id} with ${discountPercentage}% discount (${compareAtPrice} → ${variant.price})`);
       } catch (error) {
-        console.error(`Error updating variant ${variant.id}:`, error.response?.body || error);
+        console.error(`Error updating variant ${variant.id}:`, error.response ? error.response.body : error);
       }
     }
     
     console.log('Successfully processed product:', product.title);
 
+    // Remove product from processed set after DEBOUNCE_TIME
     setTimeout(() => {
       processedProducts.delete(productId);
     }, DEBOUNCE_TIME);
   } catch (error) {
-    console.error('Error updating product price:', error.response?.body || error);
+    console.error('Error updating product price:', error.response ? error.response.body : error);
+    // Remove from processed set if there was an error
     processedProducts.delete(productId);
   }
 }
 
+// Webhook verification
 function verifyWebhook(req) {
   const hmac = req.headers['x-shopify-hmac-sha256'];
   const hash = crypto
@@ -146,9 +125,13 @@ function verifyWebhook(req) {
   return hmac === hash;
 }
 
+// Product update webhook
 app.post('/webhooks/products/update', async (req, res) => {
   try {
+    console.log('Received product update webhook');
+
     if (!verifyWebhook(req)) {
+      console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
     }
 
@@ -161,23 +144,24 @@ app.post('/webhooks/products/update', async (req, res) => {
   }
 });
 
+// Collection update webhook
 app.post('/webhooks/collections/update', async (req, res) => {
   try {
+    console.log('Received collection update webhook');
+
     if (!verifyWebhook(req)) {
+      console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
     }
 
     const data = JSON.parse(req.body);
     if (data.id === process.env.SALE_COLLECTION_ID) {
       const products = await shopify.product.list({
-        collection_id: data.id,
-        limit: 250
+        collection_id: data.id
       });
       
-      const uniqueProducts = [...new Set(products.map(p => p.id))];
-      
-      for (const productId of uniqueProducts) {
-        await updateProductPrice(productId);
+      for (const product of products) {
+        await updateProductPrice(product.id);
       }
     }
     res.status(200).send('Collection webhook processed');
@@ -187,16 +171,18 @@ app.post('/webhooks/collections/update', async (req, res) => {
   }
 });
 
+// Health check endpoint
 app.get('/', (req, res) => {
+  console.log('Health check endpoint hit');
   res.send('Price Adjuster Service Running');
 });
 
+// Manual trigger endpoint with improved pagination
 app.post('/update-prices', async (req, res) => {
   try {
-    console.log('Starting manual price update for Sale collection');
+    console.log('Manual price update triggered');
     let page = 1;
     let hasMore = true;
-    const processedIds = new Set();
 
     while (hasMore) {
       const response = await shopify.product.list({
@@ -210,10 +196,7 @@ app.post('/update-prices', async (req, res) => {
       } else {
         console.log(`Processing page ${page} with ${response.length} products`);
         for (const product of response) {
-          if (!processedIds.has(product.id)) {
-            processedIds.add(product.id);
-            await updateProductPrice(product.id);
-          }
+          await updateProductPrice(product.id);
         }
         page++;
       }
