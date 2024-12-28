@@ -6,7 +6,6 @@ const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Add body parsing middleware
 app.use(express.raw({type: 'application/json'}));
 
 const shopify = new Shopify({
@@ -15,53 +14,146 @@ const shopify = new Shopify({
   apiVersion: '2024-01'
 });
 
-// Track processed products to prevent duplicates
 const processedProducts = new Set();
-const DEBOUNCE_TIME = 5000; // 5 seconds
+const DEBOUNCE_TIME = 30000; // 30 seconds
 
-// Function to get a strategic discount percentage between 25% and 60%
-function getStrategicDiscount() {
-  const appealingDiscounts = [
-    29.99,
-    39.99,
-    44.99,
-    49.99,
-    54.99,
-    59.99
-  ];
-  return appealingDiscounts[Math.floor(Math.random() * appealingDiscounts.length)];
+const categoryMarkups = {
+  // Dresses
+  'casual_day_dress': { min: 1.8, max: 2.2 },
+  'party_evening_dress': { min: 2.3, max: 2.8 },
+  'maxi_midi_dress': { min: 2.0, max: 2.5 },
+  
+  // Tops & Blouses
+  't_shirts_tanks': { min: 1.5, max: 1.8 },
+  'blouses_shirts': { min: 1.8, max: 2.2 },
+  'knits_sweaters': { min: 2.0, max: 2.4 },
+  
+  // Bottoms
+  'pants_jeans': { min: 1.8, max: 2.2 },
+  'skirts': { min: 1.7, max: 2.0 },
+  'leggings': { min: 1.5, max: 1.8 },
+  
+  // Activewear
+  'workout_sets': { min: 1.8, max: 2.2 },
+  'sports_tops': { min: 1.5, max: 1.8 },
+  'active_leggings': { min: 1.6, max: 1.9 },
+  'loungewear': { min: 1.7, max: 2.0 },
+  
+  // Outerwear
+  'jackets_coats': { min: 2.3, max: 2.8 },
+  'cardigans_blazers': { min: 2.0, max: 2.4 },
+  
+  // Default
+  'default': { min: 1.8, max: 2.2 }
+};
+
+function determineProductType(product) {
+  const title = product.title.toLowerCase();
+  const productType = product.product_type.toLowerCase();
+  
+  // Determine category based on product title and type
+  if (title.includes('dress')) {
+    if (title.includes('party') || title.includes('evening')) return 'party_evening_dress';
+    if (title.includes('maxi') || title.includes('midi')) return 'maxi_midi_dress';
+    return 'casual_day_dress';
+  }
+  
+  if (title.includes('jacket') || title.includes('coat')) return 'jackets_coats';
+  if (title.includes('cardigan') || title.includes('blazer')) return 'cardigans_blazers';
+  if (title.includes('sweater') || title.includes('knit')) return 'knits_sweaters';
+  if (title.includes('legging')) return productType.includes('active') ? 'active_leggings' : 'leggings';
+  if (title.includes('workout') || title.includes('set')) return 'workout_sets';
+  if (title.includes('sport') || title.includes('tank')) return 'sports_tops';
+  
+  if (productType.includes('t-shirt') || productType.includes('tank')) return 't_shirts_tanks';
+  if (productType.includes('blouse') || productType.includes('shirt')) return 'blouses_shirts';
+  if (productType.includes('pant') || productType.includes('jean')) return 'pants_jeans';
+  if (productType.includes('skirt')) return 'skirts';
+  
+  return 'default';
 }
 
-// Function to calculate markup based on desired discount
-function calculateMarkup(desiredDiscountPercentage) {
-  return 100 / (100 - desiredDiscountPercentage);
+function calculateDiscount(basePrice, productType) {
+  const markup = categoryMarkups[productType] || categoryMarkups.default;
+  
+  let finalMarkup;
+  if (basePrice < 30) {
+    finalMarkup = markup.min;
+  } else if (basePrice < 60) {
+    finalMarkup = (markup.min + markup.max) / 2;
+  } else {
+    finalMarkup = markup.max;
+  }
+
+  // Add small random variation
+  const variation = (Math.random() * 0.1) - 0.05; // ±5%
+  finalMarkup += variation;
+  
+  // Ensure markup is positive and reasonable
+  finalMarkup = Math.max(1.2, Math.min(finalMarkup, 3.0));
+  
+  return ((1 - 1/finalMarkup) * 100).toFixed(2);
 }
 
-// Function to update product prices
+function roundToNicePrice(price) {
+  // Round to .99 endings
+  return Math.ceil(price) - 0.01;
+}
+
+async function clearCompareAtPrice(productId) {
+  try {
+    const product = await shopify.product.get(productId);
+    for (const variant of product.variants) {
+      await shopify.productVariant.update(variant.id, {
+        compare_at_price: null
+      });
+    }
+    console.log(`Cleared compare-at price for product ${productId}`);
+  } catch (error) {
+    console.error(`Error clearing compare-at price for product ${productId}:`, error);
+  }
+}
+
 async function updateProductPrice(productId) {
-  // Check if product was recently processed
   if (processedProducts.has(productId)) {
     console.log(`Skipping product ${productId} - recently processed`);
     return;
   }
 
   try {
-    // Add product to processed set
+    // Check if product is in Sale collection
+    console.log(`Checking if product ${productId} is in Sale collection ${process.env.SALE_COLLECTION_ID}`);
+    const productCollections = await shopify.collection.list({
+      product_id: productId
+    });
+
+    const isInSaleCollection = productCollections.some(c => 
+      c.id.toString() === process.env.SALE_COLLECTION_ID.toString()
+    );
+
+    if (!isInSaleCollection) {
+      console.log(`Product ${productId} not in Sale collection - clearing compare-at price`);
+      await clearCompareAtPrice(productId);
+      return;
+    }
+
     processedProducts.add(productId);
     console.log('Processing product:', productId);
     
-    // Get product details
     const product = await shopify.product.get(productId);
     const basePrice = parseFloat(product.variants[0].price);
     
-    // Get strategic discount and calculate markup
-    const discountPercentage = getStrategicDiscount();
-    const markupMultiplier = calculateMarkup(discountPercentage);
+    // Determine product type and calculate appropriate discount
+    const productType = determineProductType(product);
+    const discountPercentage = calculateDiscount(basePrice, productType);
     
-    // Calculate compare-at price and round to .99
-    const compareAtPrice = Math.ceil(basePrice * markupMultiplier * 100 - 1) / 100;
+    // Calculate compare-at price
+    const markup = 100 / (100 - parseFloat(discountPercentage));
+    const compareAtPrice = roundToNicePrice(basePrice * markup);
     
-    // Check if metafield exists
+    console.log(`Product Type: ${productType}, Base Price: ${basePrice}, Discount: ${discountPercentage}%, Compare At: ${compareAtPrice}`);
+
+    // Update metafields
     const metafields = await shopify.metafield.list({
       metafield: {
         owner_id: productId,
@@ -73,7 +165,6 @@ async function updateProductPrice(productId) {
       m => m.namespace === 'price_automation' && m.key === 'original_price'
     );
 
-    // Create or update metafield
     if (!originalPrice) {
       console.log(`Creating metafield with compare-at price: ${compareAtPrice} (${discountPercentage}% off)`);
       originalPrice = await shopify.metafield.create({
@@ -89,33 +180,32 @@ async function updateProductPrice(productId) {
       });
     }
 
-    // Update compare-at price for all variants
-    console.log('Updating compare-at prices');
+    // Update all variants
     for (const variant of product.variants) {
       try {
+        const variantBasePrice = parseFloat(variant.price);
+        const variantCompareAtPrice = roundToNicePrice(variantBasePrice * markup);
+        
         await shopify.productVariant.update(variant.id, {
-          compare_at_price: compareAtPrice.toFixed(2)
+          compare_at_price: variantCompareAtPrice.toFixed(2)
         });
-        console.log(`Updated variant ${variant.id} with ${discountPercentage}% discount (${compareAtPrice} → ${variant.price})`);
+        console.log(`Updated variant ${variant.id} with ${discountPercentage}% discount (${variantCompareAtPrice} → ${variantBasePrice})`);
       } catch (error) {
-        console.error(`Error updating variant ${variant.id}:`, error.response ? error.response.body : error);
+        console.error(`Error updating variant ${variant.id}:`, error.response?.body || error);
       }
     }
     
     console.log('Successfully processed product:', product.title);
 
-    // Remove product from processed set after DEBOUNCE_TIME
     setTimeout(() => {
       processedProducts.delete(productId);
     }, DEBOUNCE_TIME);
   } catch (error) {
-    console.error('Error updating product price:', error.response ? error.response.body : error);
-    // Remove from processed set if there was an error
+    console.error('Error updating product price:', error.response?.body || error);
     processedProducts.delete(productId);
   }
 }
 
-// Webhook verification
 function verifyWebhook(req) {
   const hmac = req.headers['x-shopify-hmac-sha256'];
   const hash = crypto
@@ -125,13 +215,9 @@ function verifyWebhook(req) {
   return hmac === hash;
 }
 
-// Product update webhook
 app.post('/webhooks/products/update', async (req, res) => {
   try {
-    console.log('Received product update webhook');
-
     if (!verifyWebhook(req)) {
-      console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
     }
 
@@ -144,24 +230,23 @@ app.post('/webhooks/products/update', async (req, res) => {
   }
 });
 
-// Collection update webhook
 app.post('/webhooks/collections/update', async (req, res) => {
   try {
-    console.log('Received collection update webhook');
-
     if (!verifyWebhook(req)) {
-      console.log('Invalid webhook signature');
       return res.status(401).send('Invalid webhook signature');
     }
 
     const data = JSON.parse(req.body);
     if (data.id === process.env.SALE_COLLECTION_ID) {
       const products = await shopify.product.list({
-        collection_id: data.id
+        collection_id: data.id,
+        limit: 250
       });
       
-      for (const product of products) {
-        await updateProductPrice(product.id);
+      const uniqueProducts = [...new Set(products.map(p => p.id))];
+      
+      for (const productId of uniqueProducts) {
+        await updateProductPrice(productId);
       }
     }
     res.status(200).send('Collection webhook processed');
@@ -171,18 +256,16 @@ app.post('/webhooks/collections/update', async (req, res) => {
   }
 });
 
-// Health check endpoint
 app.get('/', (req, res) => {
-  console.log('Health check endpoint hit');
   res.send('Price Adjuster Service Running');
 });
 
-// Manual trigger endpoint with improved pagination
 app.post('/update-prices', async (req, res) => {
   try {
-    console.log('Manual price update triggered');
+    console.log('Starting manual price update for Sale collection');
     let page = 1;
     let hasMore = true;
+    const processedIds = new Set();
 
     while (hasMore) {
       const response = await shopify.product.list({
@@ -196,7 +279,10 @@ app.post('/update-prices', async (req, res) => {
       } else {
         console.log(`Processing page ${page} with ${response.length} products`);
         for (const product of response) {
-          await updateProductPrice(product.id);
+          if (!processedIds.has(product.id)) {
+            processedIds.add(product.id);
+            await updateProductPrice(product.id);
+          }
         }
         page++;
       }
@@ -212,4 +298,5 @@ app.post('/update-prices', async (req, res) => {
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
   console.log('Price Adjuster Service Started');
+  console.log('Category-based pricing enabled');
 });
