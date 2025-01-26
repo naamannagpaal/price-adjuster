@@ -1,83 +1,71 @@
-# 🛍️ Shopify Price Adjuster
+# Price Adjuster for Shopify 🛒
 
-*Automate dynamic pricing, discounts, and markup rules for Shopify stores*  
-*Built with Node.js + Express.js | AI-assisted with [Claude](https://claude.ai)*
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new)
-[![Node.js Version](https://img.shields.io/badge/Node.js-18.x%2B-green)](https://nodejs.org)
+**Automate discounts, price updates, and more for your Shopify store.**  
+A smart tool to manage pricing strategies effortlessly, built with **Express.js** and **Shopify API**.
 
 ---
 
-## 🌟 Features
-
-- **Dynamic Pricing Engine**  
-  Auto-calculate discounts & markups based on product categories
-- **Bulk Processing**  
-  Update prices for individual items or entire collections
-- **Webhook Integration**  
-  Auto-trigger updates on product/collection changes
-- **Price Protection**  
-  Enforce min/max margins with smart rounding ($19.99 vs $20)
-- **Historical Tracking**  
-  Maintain price history via Shopify metafields
+## What It Does 🚀
+- **Dynamic Discounts**: Automatically calculates optimal discounts based on your rules.  
+- **Price Updates**: Adjusts product prices and compares them with competitors.  
+- **Bulk Processing**: Handles individual products and entire collections.  
+- **Price History**: Tracks changes over time for better decision-making.  
 
 ---
 
-## 🚀 Quick Start
+## Features ✨
+- **Category-Specific Markups**: Set different markup rules for various product categories.  
+- **Smart Price Rounding**: Rounds prices to attractive, customer-friendly values.  
+- **Webhook Support**: Processes product and collection updates in real-time.  
+- **Price Protection**: Ensures prices stay within min/max markup ranges.  
 
-### Prerequisites
-- Shopify store with **Admin API access**
-- Node.js v18+
+---
 
-### Installation
+## Setup 🛠️
+
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/naamannagpaal/price-adjuster.git
 cd price-adjuster
-npm install
-
-Configuration
-
-Create .env file:
-env
-Copy
+```
+2. Configure Your Shopify Store
+Create a `.env` file in the root directory and add your Shopify credentials:
+```
 SHOP_NAME=your-store.myshopify.com
-ACCESS_TOKEN=your_admin_api_token
-SALE_COLLECTION_ID=collections/123456789
-Start service:
-bash
-Copy
-npm start
-🔌 API Endpoints
+ACCESS_TOKEN=your_access_token
+SALE_COLLECTION_ID=your_collection_id
+```
 
-Endpoint	Method	Description
-/	GET	Health check
-/webhooks/products/update	POST	Handle product updates
-/webhooks/collections/update	POST	Process collection changes
-/update-prices	POST	Manual price adjustment trigger
-🛠️ How It Works
+3. Install Dependencies
+   ```
+   npm install
+   ```
 
-mermaid
-Copy
-graph TD
-    A[Shopify Store] -->|Webhooks| B(Price Adjuster)
-    B --> C{Apply Rules}
-    C -->|Category| D[Markup Range]
-    C -->|Collection| E[Bulk Discount]
-    C -->|Individual| F[Smart Rounding]
-    D & E & F --> G[Update Prices]
-    G --> H[Shopify Metafields History]
-🤖 AI Collaboration
+4. Start the Service
+   ```
+   npm start
+   ```
+   
+## API Endpoints 🌐
 
-This project was developed with assistance from Claude for:
+- **GET `/health`**: Health check endpoint.  
+- **POST `/webhooks/products/update`**: Handles product updates.  
+- **POST `/webhooks/collections/update`**: Processes collection updates.  
+- **POST `/update-prices`**: Manually trigger price updates.  
 
-Code optimization suggestions
-README documentation structuring
-Deployment workflow design
-📜 License
+Deployment 🚀
 
-MIT Licensed - See LICENSE.
-Free for personal/commercial use with Shopify stores.
+Ready to deploy on Vercel! Just connect your repository, and you're good to go.
 
-Need Help?
-📧 contact@namannagpal.com | 💬 GitHub Issues
+Built With 🛠️
+
+Express.js: For building the backend server.
+Shopify API: To interact with your Shopify store.
+Need Help? 🤔
+
+Reach out via GitHub Issues or email contact@namannagpal.com.
+
+License 📄
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
