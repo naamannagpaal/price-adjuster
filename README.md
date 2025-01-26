@@ -24,11 +24,12 @@ A smart tool to manage pricing strategies effortlessly, built with **Express.js*
 ## Setup 🛠️
 
 ### 1. Clone the Repository
-```bash
+```
 git clone https://github.com/naamannagpaal/price-adjuster.git
 cd price-adjuster
 ```
 2. Configure Your Shopify Store
+   
 Create a `.env` file in the root directory and add your Shopify credentials:
 ```
 SHOP_NAME=your-store.myshopify.com
@@ -37,14 +38,14 @@ SALE_COLLECTION_ID=your_collection_id
 ```
 
 3. Install Dependencies
-   ```
-   npm install
-   ```
+ ```
+ npm install
+ ```
 
 4. Start the Service
-   ```
-   npm start
-   ```
+```
+npm start
+```
    
 ## API Endpoints 🌐
 
@@ -60,7 +61,9 @@ Ready to deploy on Vercel! Just connect your repository, and you're good to go.
 Built With 🛠️
 
 Express.js: For building the backend server.
+
 Shopify API: To interact with your Shopify store.
+
 Need Help? 🤔
 
 Reach out via GitHub Issues or email contact@namannagpal.com.
